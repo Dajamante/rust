@@ -195,16 +195,47 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                 // Casting an enum to an integer is equivalent to computing the discriminant and casting the
                 // discriminant. Previously every backend had to repeat the logic for this operation. Now we
                 // create all the steps directly in MIR with operations all backends need to support anyway.
+                // TODO: remove `buf[f as usize + 1]` f == source
                 let (source, ty) = if let ty::Adt(adt_def, ..) = source.ty.kind() && adt_def.is_enum() {
+                    // Gets the representation of the `enum` that will be cast. This can be any kind of integer types.
                     let discr_ty = adt_def.repr().discr_type().to_ty(this.tcx);
+                    // Trying to extract the biggest variant of the enum
+                    // The information might be in the type
+                    let layout = this.tcx.layout_of(source.ty);
+                    if let Abi::Scalar(scalar) = layout {
+                        if let Int(_) = scalar.primitive(){
+                           
+                            // extracted enum value upper bound
+                            let enum_value_upper_bound = scalar.valid_range(this.tcx);
+
+                            // We need to make sure that our discr does not overflow 
+                            // let temp_value= todo!();
+                            // Where the meta meets the real thing
+                            // discr name for the variable we will be generate, while enum_value... is an u8
+                            // let assume_arg = temp_value => discr;
+                            // assume(assume_arg);
+                            // NEXT STEP match upper bound against discr
+                            let assume_arg = todo!();
+                            self.push(
+                                block,
+                                Statement { source_info, kind: StatementKind::Intrinsic(Box::new(NonDivergingIntrinsic::Assume(assume_arg))) },
+                            );
+                        }
+                    }
+                    // Representation converstion: gives a reference to the value
                     let place = unpack!(block = this.as_place(block, source));
+                    //  Creating a temporary variable
                     let discr = this.temp(discr_ty, source.span);
+                    // discr = discriminant(place);
                     this.cfg.push_assign(
                         block,
                         source_info,
                         discr,
+                        // TODO: remove computation of Discriminant
                         Rvalue::Discriminant(place),
                     );
+
+                    
 
                     (Operand::Move(discr), discr_ty)
                 } else {
@@ -680,9 +711,10 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     fn neg_1_literal(&mut self, span: Span, ty: Ty<'tcx>) -> Operand<'tcx> {
         let param_ty = ty::ParamEnv::empty().and(ty);
         let size = self.tcx.layout_of(param_ty).unwrap().size;
-        let literal = ConstantKind::from_bits(self.tcx, size.unsigned_int_max(), param_ty);
+        //let literal = ConstantKind::from_bits(self.tcx, size.unsigned_int_max(), param_ty);
 
-        self.literal_operand(span, literal)
+        //self.literal_operand(span, literal)
+        self.literal_to_operand(size.unsigned_int_max(), param_ty, span)
     }
 
     // Helper to get the minimum value of the appropriate type
@@ -691,8 +723,20 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         let param_ty = ty::ParamEnv::empty().and(ty);
         let bits = self.tcx.layout_of(param_ty).unwrap().size.bits();
         let n = 1 << (bits - 1);
-        let literal = ConstantKind::from_bits(self.tcx, n, param_ty);
+        //let literal = ConstantKind::from_bits(self.tcx, n, param_ty);
+
+        //self.literal_operand(span, literal)
+
+        self.literal_to_operand(n, param_ty, span)
+
+
+    }
+
+    fn literal_to_operand(&mut self, number: u128, param_ty: ty::ParamEnvAnd<'_, Ty<'_>>, span: Span) -> Operand<'tcx> {
+        
+        let literal = ConstantKind::from_bits(self.tcx, number, param_ty);
 
         self.literal_operand(span, literal)
     }
+
 }
