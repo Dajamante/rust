@@ -2,6 +2,7 @@
 
 use rustc_index::vec::Idx;
 use rustc_middle::ty::util::IntTypeExt;
+use rustc_target::abi::{Abi, Primitive};
 
 use crate::build::expr::as_place::PlaceBase;
 use crate::build::expr::category::{Category, RvalueFunc};
@@ -201,12 +202,26 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                     let discr_ty = adt_def.repr().discr_type().to_ty(this.tcx);
                     // Trying to extract the biggest variant of the enum
                     // The information might be in the type
-                    let layout = this.tcx.layout_of(source.ty);
-                    if let Abi::Scalar(scalar) = layout {
-                        if let Int(_) = scalar.primitive(){
+                    let layout = this.tcx.layout_of(this.param_env.and(source.ty));
+
+                    // Representation converstion: gives a reference to the value
+                    let place = unpack!(block = this.as_place(block, source));
+                    //  Creating a temporary variable
+                    let discr = this.temp(discr_ty, source.span);
+                    // discr = discriminant(place);
+                    this.cfg.push_assign(
+                        block,
+                        source_info,
+                        discr,
+                        // TODO: remove computation of Discriminant
+                        Rvalue::Discriminant(place),
+                    );
+                    
+                    if let Abi::Scalar(scalar) = layout.unwrap().abi {
+                        if let Primitive::Int(..) = scalar.primitive(){
                            
                             // extracted enum value upper bound
-                            let enum_value_upper_bound = scalar.valid_range(this.tcx);
+                            let enum_value_upper_bound = scalar.valid_range(&this.tcx);
 
                             // We need to make sure that our discr does not overflow 
                             // let temp_value= todo!();
@@ -222,18 +237,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                             );
                         }
                     }
-                    // Representation converstion: gives a reference to the value
-                    let place = unpack!(block = this.as_place(block, source));
-                    //  Creating a temporary variable
-                    let discr = this.temp(discr_ty, source.span);
-                    // discr = discriminant(place);
-                    this.cfg.push_assign(
-                        block,
-                        source_info,
-                        discr,
-                        // TODO: remove computation of Discriminant
-                        Rvalue::Discriminant(place),
-                    );
+                    
 
                     
 
@@ -711,9 +715,6 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     fn neg_1_literal(&mut self, span: Span, ty: Ty<'tcx>) -> Operand<'tcx> {
         let param_ty = ty::ParamEnv::empty().and(ty);
         let size = self.tcx.layout_of(param_ty).unwrap().size;
-        //let literal = ConstantKind::from_bits(self.tcx, size.unsigned_int_max(), param_ty);
-
-        //self.literal_operand(span, literal)
         self.literal_to_operand(size.unsigned_int_max(), param_ty, span)
     }
 
@@ -723,9 +724,6 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         let param_ty = ty::ParamEnv::empty().and(ty);
         let bits = self.tcx.layout_of(param_ty).unwrap().size.bits();
         let n = 1 << (bits - 1);
-        //let literal = ConstantKind::from_bits(self.tcx, n, param_ty);
-
-        //self.literal_operand(span, literal)
 
         self.literal_to_operand(n, param_ty, span)
 
